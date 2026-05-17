@@ -13,13 +13,14 @@ const Habits = (() => {
   }
 
   function add(data, payload) {
+    const frequency = ['daily', 'weekly', 'custom'].includes(payload.frequency) ? payload.frequency : 'daily';
     const habit = {
       id: Storage.uid(),
-      title: payload.title,
-      description: payload.description || '',
-      category: payload.category || 'Other',
-      target: payload.target || '',
-      frequency: payload.frequency || 'daily',
+      title: Storage.sanitizeString(payload.title, 'Untitled Habit', 80),
+      description: Storage.sanitizeString(payload.description, '', 500),
+      category: Storage.sanitizeString(payload.category, 'Other', 40) || 'Other',
+      target: Storage.sanitizeString(payload.target, '', 120),
+      frequency,
       customDays: payload.customDays || [0, 1, 2, 3, 4, 5, 6],
       createdAt: new Date().toISOString(),
       order: data.habits.length,
@@ -37,11 +38,11 @@ const Habits = (() => {
     const h = getById(data, id);
     if (!h) return null;
     Object.assign(h, {
-      title: payload.title,
-      description: payload.description,
-      category: payload.category,
-      target: payload.target,
-      frequency: payload.frequency,
+      title: Storage.sanitizeString(payload.title, h.title || 'Untitled Habit', 80),
+      description: Storage.sanitizeString(payload.description, '', 500),
+      category: Storage.sanitizeString(payload.category, 'Other', 40) || 'Other',
+      target: Storage.sanitizeString(payload.target, '', 120),
+      frequency: ['daily', 'weekly', 'custom'].includes(payload.frequency) ? payload.frequency : 'daily',
       customDays: payload.customDays
     });
     Streak.recalculate(h);
@@ -140,15 +141,17 @@ const Habits = (() => {
     const progress = habit.consistency;
     const circumference = 2 * Math.PI * 18;
     const offset = circumference - (progress / 100) * circumference;
+    const safeId = escapeAttr(habit.id);
+    const safeCategoryClass = sanitizeClassName(habit.category);
 
     return `
       <article class="habit-card glass ${statusClass} ${!scheduled ? 'habit-card--rest' : ''}"
-        data-id="${habit.id}" draggable="true">
+        data-id="${safeId}" draggable="true">
         <div class="habit-card__drag" title="Drag to reorder">⋮⋮</div>
         <div class="habit-card__header">
           <div class="habit-card__title-row">
             <h3>${escapeHtml(habit.title)}</h3>
-            <span class="tag tag--${slug(habit.category)}">${escapeHtml(habit.category)}</span>
+            <span class="tag tag--${safeCategoryClass}">${escapeHtml(habit.category)}</span>
           </div>
           ${habit.description ? `<p class="habit-desc">${escapeHtml(habit.description)}</p>` : ''}
         </div>
@@ -171,11 +174,11 @@ const Habits = (() => {
         </div>
         ${scheduled ? `
         <div class="habit-card__actions">
-          <button type="button" class="btn btn--success btn-sm ${status === 'completed' ? 'active' : ''}" data-action="complete" data-id="${habit.id}">✓ Done</button>
-          <button type="button" class="btn btn--ghost btn-sm ${status === 'missed' ? 'active' : ''}" data-action="miss" data-id="${habit.id}">✗ Miss</button>
-          <button type="button" class="btn btn--ghost btn-sm" data-action="habit-note" data-id="${habit.id}">📝</button>
-          <button type="button" class="btn btn--ghost btn-sm" data-action="edit" data-id="${habit.id}">✎</button>
-          <button type="button" class="btn btn--ghost btn-sm danger" data-action="delete" data-id="${habit.id}">🗑</button>
+          <button type="button" class="btn btn--success btn-sm ${status === 'completed' ? 'active' : ''}" data-action="complete" data-id="${safeId}">✓ Done</button>
+          <button type="button" class="btn btn--ghost btn-sm ${status === 'missed' ? 'active' : ''}" data-action="miss" data-id="${safeId}">✗ Miss</button>
+          <button type="button" class="btn btn--ghost btn-sm" data-action="habit-note" data-id="${safeId}">📝</button>
+          <button type="button" class="btn btn--ghost btn-sm" data-action="edit" data-id="${safeId}">✎</button>
+          <button type="button" class="btn btn--ghost btn-sm danger" data-action="delete" data-id="${safeId}">🗑</button>
         </div>` : `<p class="rest-day">Rest day — no tracking required</p>`}
         ${note ? `<p class="habit-inline-note">"${escapeHtml(note)}"</p>` : ''}
         <footer class="habit-card__footer">
@@ -186,13 +189,19 @@ const Habits = (() => {
   }
 
   function escapeHtml(s) {
-    const d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
+    return Security.escapeHTML(s);
+  }
+
+  function escapeAttr(s) {
+    return Security.escapeAttribute(s);
+  }
+
+  function sanitizeClassName(s) {
+    return Security.sanitizeClassName(s);
   }
 
   function slug(s) {
-    return s.toLowerCase().replace(/\s+/g, '-');
+    return sanitizeClassName(s);
   }
 
   function formatDate(isoOrKey) {
@@ -247,6 +256,8 @@ const Habits = (() => {
     getHabitNote,
     renderCard,
     bindDragDrop,
-    escapeHtml
+    escapeHtml,
+    escapeAttr,
+    sanitizeClassName
   };
 })();

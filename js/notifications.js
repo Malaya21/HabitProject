@@ -80,16 +80,31 @@ const Notifications = (() => {
 
   function renderReminderSettings(container, data, onChange) {
     if (!container) return;
-    container.innerHTML = (data.settings.reminders || [])
-      .map(
-        (r) => `
-      <label class="reminder-row">
-        <input type="checkbox" data-rem-id="${r.id}" ${r.enabled ? 'checked' : ''} class="rem-enable">
-        <span class="reminder-label">${Habits.escapeHtml(r.label)}</span>
-        <input type="time" data-rem-id="${r.id}" value="${r.time}" class="rem-time" title="${Habits.escapeHtml(r.message)}">
-      </label>`
-      )
-      .join('');
+    const rows = (data.settings.reminders || []).map((r) => {
+      const row = document.createElement('label');
+      row.className = 'reminder-row';
+
+      const enabled = document.createElement('input');
+      enabled.type = 'checkbox';
+      enabled.dataset.remId = r.id;
+      enabled.checked = !!r.enabled;
+      enabled.className = 'rem-enable';
+
+      const label = document.createElement('span');
+      label.className = 'reminder-label';
+      Security.safeRenderText(label, r.label);
+
+      const time = document.createElement('input');
+      time.type = 'time';
+      time.dataset.remId = r.id;
+      time.value = r.time;
+      time.className = 'rem-time';
+      time.title = r.message;
+
+      row.append(enabled, label, time);
+      return row;
+    });
+    container.replaceChildren(...rows);
 
     container.querySelectorAll('.rem-enable').forEach((el) => {
       el.addEventListener('change', () => {

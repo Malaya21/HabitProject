@@ -298,9 +298,11 @@ const Analytics = (() => {
 
   function renderHeatmap(container, cells) {
     if (!container) return;
-    container.innerHTML = '';
     if (!cells.length) {
-      container.innerHTML = '<p class="analytics-empty">No activity yet — complete habits to fill the heatmap.</p>';
+      const empty = document.createElement('p');
+      empty.className = 'analytics-empty';
+      empty.textContent = 'No activity yet — complete habits to fill the heatmap.';
+      container.replaceChildren(empty);
       return;
     }
     const wrap = document.createElement('div');
@@ -311,46 +313,70 @@ const Analytics = (() => {
       el.title = `${c.date}: ${c.completed}/${c.scheduled} habits`;
       wrap.appendChild(el);
     });
-    container.appendChild(wrap);
+    container.replaceChildren(wrap);
   }
 
   function renderSuccessRates(container, rates) {
     if (!container) return;
     if (!rates.length) {
-      container.innerHTML = '<p class="analytics-empty">Add habits to see success rates.</p>';
+      const empty = document.createElement('p');
+      empty.className = 'analytics-empty';
+      empty.textContent = 'Add habits to see success rates.';
+      container.replaceChildren(empty);
       return;
     }
-    container.innerHTML = rates
-      .map((r, i) => {
-        const w = Math.max(r.rate, 0);
-        const displayW = w === 0 ? 0 : Math.max(w, 8);
-        return `
-      <div class="rate-row">
-        <span class="rate-title" title="${Habits.escapeHtml(r.title)}">${Habits.escapeHtml(r.title)}</span>
-        <div class="rate-bar">
-          <div class="rate-fill" style="width:${displayW}%;background:${COLORS[i % COLORS.length]}" data-rate="${r.rate}"></div>
-        </div>
-        <span class="rate-pct">${r.rate}%</span>
-      </div>`;
-      })
-      .join('');
+    const rows = rates.map((r, i) => {
+      const w = Math.max(r.rate, 0);
+      const displayW = w === 0 ? 0 : Math.max(w, 8);
+      const row = document.createElement('div');
+      row.className = 'rate-row';
+
+      const title = document.createElement('span');
+      title.className = 'rate-title';
+      title.title = r.title;
+      title.textContent = r.title;
+
+      const bar = document.createElement('div');
+      bar.className = 'rate-bar';
+      const fill = document.createElement('div');
+      fill.className = 'rate-fill';
+      fill.style.width = `${displayW}%`;
+      fill.style.background = COLORS[i % COLORS.length];
+      fill.dataset.rate = r.rate;
+      bar.appendChild(fill);
+
+      const pct = document.createElement('span');
+      pct.className = 'rate-pct';
+      pct.textContent = `${r.rate}%`;
+
+      row.append(title, bar, pct);
+      return row;
+    });
+    container.replaceChildren(...rows);
   }
 
   function renderTopHabits(container, data) {
     const { best, worst } = getTopBottom(data);
     const bestLabel = best?.rate > 0 ? `${best.rate}% this week` : 'No completions yet';
     const worstLabel = worst ? `${worst.rate}% this week` : '';
-    container.innerHTML = `
-      <div class="top-item best">
-        <span class="label">Most Completed (7 days)</span>
-        <strong>${best ? Habits.escapeHtml(best.title) : '—'}</strong>
-        <span class="val">${bestLabel}</span>
-      </div>
-      <div class="top-item worst">
-        <span class="label">Needs Attention</span>
-        <strong>${worst ? Habits.escapeHtml(worst.title) : '—'}</strong>
-        <span class="val">${worstLabel}</span>
-      </div>`;
+    const makeItem = (kind, labelText, titleText, valueText) => {
+      const item = document.createElement('div');
+      item.className = `top-item ${kind}`;
+      const label = document.createElement('span');
+      label.className = 'label';
+      label.textContent = labelText;
+      const title = document.createElement('strong');
+      title.textContent = titleText;
+      const val = document.createElement('span');
+      val.className = 'val';
+      val.textContent = valueText;
+      item.append(label, title, val);
+      return item;
+    };
+    container.replaceChildren(
+      makeItem('best', 'Most Completed (7 days)', best ? best.title : '—', bestLabel),
+      makeItem('worst', 'Needs Attention', worst ? worst.title : '—', worstLabel)
+    );
   }
 
   function renderWeeklyOverview(container, weekData) {

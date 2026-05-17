@@ -1,10 +1,46 @@
 /**
  * storage.js — LocalStorage persistence, defaults, import/export
  */
+const Security = (() => {
+  function escapeHTML(value = '') {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function escapeAttribute(value = '') {
+    return escapeHTML(value).replace(/`/g, '&#96;');
+  }
+
+  function sanitizeClassName(value = 'safe') {
+    return String(value)
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60) || 'safe';
+  }
+
+  function safeRenderText(el, value = '') {
+    if (el) el.textContent = value ?? '';
+  }
+
+  return { escapeHTML, escapeAttribute, sanitizeClassName, safeRenderText };
+})();
+
 const Storage = (() => {
   const KEY = 'reflectflow_data';
   const VERSION = 1;
   const DATA_EPOCH = 2; /* bump to reset sample data → fresh start */
+  const REQUIRED_IMPORT_FIELDS = ['habits', 'settings', 'notes', 'dailySummaries', 'analytics', 'lastActiveDate'];
+  const VALID_THEMES = ['dark', 'light', 'system'];
+  const VALID_LAYOUTS = ['default', 'compact', 'wide'];
+  const VALID_FREQUENCIES = ['daily', 'weekly', 'custom'];
+  const VALID_STATUSES = ['completed', 'missed'];
+  const VALID_MOODS = ['great', 'good', 'neutral', 'low', 'bad'];
+  let lastImportReport = null;
 
   const DEFAULT_REMINDERS = [
     { id: 'rem-dsa', label: 'DSA Study', time: '18:00', message: 'Time to learn DSA — consistency beats talent!', enabled: true, habitMatch: 'Learn DSA' },
@@ -48,6 +84,268 @@ const Storage = (() => {
 
   function csvCell(value) {
     return `"${String(value ?? '').replace(/"/g, '""')}"`;
+  }
+
+  function isPlainObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  function toBoolean(value, fallback = false) {
+    return typeof value === 'boolean' ? value : fallback;
+  }
+
+  function toNumber(value, fallback = 0, min = 0, max = Number.MAX_SAFE_INTEGER) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, n));
+  }
+
+  function sanitizeString(value, fallback = '', maxLength = 240) {
+    if (value === undefined || value === null) return fallback;
+    // Keep user text readable while removing control characters and markup brackets.
+    return String(value)
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+      .replace(/\son[a-z]+\s*=/gi, '')
+      .replace(/javascript:/gi, '')
+      .replace(/[<>]/g, '')
+      .trim()
+      .slice(0, maxLength);
+  }
+
+  function sanitizeDateKey(value, fallback = todayKey()) {
+    const clean = sanitizeString(value, fallback, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(clean) && !Number.isNaN(new Date(clean + 'T12:00:00').getTime())) {
+      return clean;
+    }
+    return fallback;
+  }
+
+  function sanitizeIsoDate(value, fallback = new Date().toISOString()) {
+    const clean = sanitizeString(value, '', 40);
+    if (!clean) return fallback;
+    const d = new Date(clean);
+    return Number.isNaN(d.getTime()) ? fallback : d.toISOString();
+  }
+
+  function sanitizeEnum(value, allowed, fallback) {
+    const clean = sanitizeString(value, fallback, 40);
+    return allowed.includes(clean) ? clean : fallback;
+  }
+
+  function sanitizeStringMap(value, maxValueLength = 800) {
+    if (!isPlainObject(value)) return {};
+    return Object.entries(value).reduce((out, [key, val]) => {
+      const safeKey = sanitizeDateKey(key, null);
+      if (!safeKey) return out;
+      out[safeKey] = sanitizeString(val, '', maxValueLength);
+      return out;
+    }, {});
+  }
+
+  function validateHistory(value) {
+    if (!isPlainObject(value)) return {};
+    return Object.entries(value).reduce((out, [key, val]) => {
+      const safeKey = sanitizeDateKey(key, null);
+      const status = sanitizeEnum(val, VALID_STATUSES, '');
+      if (safeKey && status) out[safeKey] = status;
+      return out;
+    }, {});
+  }
+
+  function validateCustomDays(value, frequency) {
+    const fallback = frequency === 'daily' ? [0, 1, 2, 3, 4, 5, 6] : [1, 2, 3, 4, 5, 6];
+    if (!Array.isArray(value)) return fallback;
+    const days = [...new Set(value.map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))];
+    return days.length ? days.sort((a, b) => a - b) : fallback;
+  }
+
+  function createDefaultHabit(index = 0, overrides = {}) {
+    const now = new Date().toISOString();
+    const frequency = sanitizeEnum(overrides.frequency, VALID_FREQUENCIES, 'daily');
+    // Build a full habit shape from safe defaults, then layer sanitized imported values on top.
+    return {
+      id: sanitizeString(overrides.id, uid(), 80) || uid(),
+      title: sanitizeString(overrides.title, `Imported Habit ${index + 1}`, 80) || `Imported Habit ${index + 1}`,
+      description: sanitizeString(overrides.description, '', 500),
+      category: sanitizeString(overrides.category, 'Other', 40) || 'Other',
+      target: sanitizeString(overrides.target, '', 120),
+      frequency,
+      customDays: validateCustomDays(overrides.customDays, frequency),
+      createdAt: sanitizeIsoDate(overrides.createdAt, now),
+      order: toNumber(overrides.order, index, 0),
+      history: validateHistory(overrides.history),
+      habitNotes: sanitizeStringMap(overrides.habitNotes, 800),
+      streak: {
+        current: toNumber(overrides.streak?.current, 0, 0),
+        longest: toNumber(overrides.streak?.longest ?? overrides.longestStreak, 0, 0)
+      },
+      longestStreak: toNumber(overrides.longestStreak ?? overrides.streak?.longest, 0, 0),
+      consistency: toNumber(overrides.consistency, 0, 0, 100)
+    };
+  }
+
+  function validateHabit(input, index = 0, report = null) {
+    if (!isPlainObject(input)) {
+      report?.warnings.push(`Habit at index ${index} was not an object and was replaced.`);
+      return createDefaultHabit(index);
+    }
+
+    ['id', 'title', 'category', 'frequency', 'createdAt', 'history', 'streak', 'longestStreak'].forEach((field) => {
+      if (!(field in input)) report?.warnings.push(`Habit at index ${index} was missing "${field}".`);
+    });
+
+    const habit = createDefaultHabit(index, input);
+    const longest = Math.max(habit.streak.longest, habit.longestStreak, habit.streak.current);
+    habit.streak.longest = longest;
+    habit.longestStreak = longest;
+    if (typeof Streak !== 'undefined') Streak.recalculate(habit);
+    return habit;
+  }
+
+  function validateReminder(input, index = 0, report = null) {
+    if (!isPlainObject(input)) {
+      report?.warnings.push(`Reminder at index ${index} was ignored because it was invalid.`);
+      return null;
+    }
+    const time = sanitizeString(input.time, '09:00', 5);
+    return {
+      id: sanitizeString(input.id, `rem-${index}`, 80) || `rem-${index}`,
+      label: sanitizeString(input.label, 'Reminder', 80) || 'Reminder',
+      time: /^\d{2}:\d{2}$/.test(time) ? time : '09:00',
+      message: sanitizeString(input.message, 'Time to check your habits.', 200),
+      enabled: toBoolean(input.enabled, false),
+      habitMatch: sanitizeString(input.habitMatch, '', 120)
+    };
+  }
+
+  function validateSettings(input, report = null) {
+    const defaults = defaultState().settings;
+    if (!isPlainObject(input)) {
+      report?.warnings.push('Settings were missing or invalid and defaults were used.');
+      return defaults;
+    }
+
+    const reminders = Array.isArray(input.reminders)
+      ? input.reminders.map((r, index) => validateReminder(r, index, report)).filter(Boolean)
+      : DEFAULT_REMINDERS.map((r) => ({ ...r }));
+
+    return {
+      theme: sanitizeEnum(input.theme, VALID_THEMES, defaults.theme),
+      layout: sanitizeEnum(input.layout, VALID_LAYOUTS, defaults.layout),
+      notifications: toBoolean(input.notifications, defaults.notifications),
+      reminders,
+      onboarded: toBoolean(input.onboarded, true)
+    };
+  }
+
+  function validateNote(input, index = 0, report = null) {
+    if (!isPlainObject(input)) {
+      report?.warnings.push(`Note at index ${index} was ignored because it was invalid.`);
+      return null;
+    }
+    return {
+      id: sanitizeString(input.id, uid(), 80) || uid(),
+      date: sanitizeDateKey(input.date),
+      mood: sanitizeEnum(input.mood, VALID_MOODS, 'neutral'),
+      content: sanitizeString(input.content, '', 5000),
+      createdAt: sanitizeIsoDate(input.createdAt),
+      updatedAt: sanitizeIsoDate(input.updatedAt || input.createdAt)
+    };
+  }
+
+  function validateDailySummaries(input, report = null) {
+    if (!isPlainObject(input)) {
+      report?.warnings.push('Daily summaries were missing or invalid and were reset.');
+      return {};
+    }
+    return Object.entries(input).reduce((out, [key, summary]) => {
+      const safeKey = sanitizeDateKey(key, null);
+      if (!safeKey || !isPlainObject(summary)) return out;
+      out[safeKey] = {
+        date: sanitizeDateKey(summary.date, safeKey),
+        scheduled: toNumber(summary.scheduled, 0, 0),
+        completed: toNumber(summary.completed, 0, 0),
+        missed: toNumber(summary.missed, 0, 0),
+        pending: toNumber(summary.pending, 0, 0),
+        score: toNumber(summary.score, 0, 0, 100),
+        habits: Array.isArray(summary.habits)
+          ? summary.habits
+              .filter(isPlainObject)
+              .map((h) => ({
+                id: sanitizeString(h.id, '', 80),
+                title: sanitizeString(h.title, 'Untitled habit', 80),
+                status: sanitizeEnum(h.status, [...VALID_STATUSES, 'pending'], 'pending')
+              }))
+          : [],
+        archivedAt: sanitizeIsoDate(summary.archivedAt)
+      };
+      return out;
+    }, {});
+  }
+
+  function validateAnalytics(input, report = null) {
+    if (!isPlainObject(input)) {
+      report?.warnings.push('Analytics were missing or invalid and defaults were used.');
+      return {};
+    }
+    return JSON.parse(JSON.stringify(input));
+  }
+
+  function sanitizeImportedState(parsed) {
+    const report = { warnings: [], repairedFields: [] };
+    if (!isPlainObject(parsed)) throw new Error('Import file must contain a JSON object.');
+
+    // Imported files are untrusted. Rebuild a whitelisted state instead of merging blindly.
+    REQUIRED_IMPORT_FIELDS.forEach((field) => {
+      if (!(field in parsed)) {
+        report.repairedFields.push(field);
+        report.warnings.push(`Missing top-level field "${field}" was recreated with a safe default.`);
+      }
+    });
+
+    const fallback = freshStartState();
+    const importedHabits = Array.isArray(parsed.habits) ? parsed.habits : [];
+    if (!Array.isArray(parsed.habits)) report.warnings.push('Habits were missing or invalid and default habits were used.');
+
+    const habits = importedHabits.length
+      ? importedHabits.map((habit, index) => validateHabit(habit, index, report))
+      : fallback.habits;
+
+    const seenIds = new Set();
+    habits.forEach((habit, index) => {
+      if (seenIds.has(habit.id)) {
+        report.warnings.push(`Duplicate habit id "${habit.id}" was replaced.`);
+        habit.id = uid();
+      }
+      seenIds.add(habit.id);
+      habit.order = index;
+    });
+
+    const notes = Array.isArray(parsed.notes)
+      ? parsed.notes.map((note, index) => validateNote(note, index, report)).filter(Boolean)
+      : [];
+
+    const activeDate = sanitizeDateKey(parsed.activeDate || parsed.lastActiveDate || parsed.lastVisit, todayKey());
+    const safeState = {
+      version: VERSION,
+      dataEpoch: DATA_EPOCH,
+      habits,
+      notes,
+      settings: validateSettings(parsed.settings, report),
+      achievements: Array.isArray(parsed.achievements) ? parsed.achievements.map((a) => sanitizeString(a, '', 40)).filter(Boolean) : [],
+      quoteIndex: toNumber(parsed.quoteIndex, fallback.quoteIndex, 0, QUOTES.length - 1),
+      activeDate,
+      lastActiveDate: activeDate,
+      lastVisit: sanitizeDateKey(parsed.lastVisit || activeDate, activeDate),
+      dailySummaries: validateDailySummaries(parsed.dailySummaries, report),
+      analytics: validateAnalytics(parsed.analytics, report)
+    };
+
+    if (typeof Daily !== 'undefined') Daily.processDayChange(safeState);
+    else safeState.habits.forEach((h) => Streak.recalculate(h));
+    safeState.lastActiveDate = safeState.activeDate;
+    lastImportReport = report;
+    return safeState;
   }
 
   function createDefaultHabits() {
@@ -97,8 +395,10 @@ const Storage = (() => {
       achievements: [],
       quoteIndex: Math.floor(Math.random() * QUOTES.length),
       activeDate: todayKey(),
+      lastActiveDate: todayKey(),
       lastVisit: todayKey(),
-      dailySummaries: {}
+      dailySummaries: {},
+      analytics: {}
     };
   }
 
@@ -127,6 +427,8 @@ const Storage = (() => {
       if (!data.habits) data.habits = [];
       if (!data.notes) data.notes = [];
       if (!data.dailySummaries) data.dailySummaries = {};
+      if (!data.analytics) data.analytics = {};
+      if (!data.lastActiveDate) data.lastActiveDate = data.activeDate || data.lastVisit || todayKey();
       if (!data.settings) data.settings = defaultState().settings;
       if (typeof Daily !== 'undefined') {
         Daily.processDayChange(data);
@@ -134,6 +436,7 @@ const Storage = (() => {
         data.activeDate = todayKey();
         data.habits.forEach((h) => Streak.recalculate(h));
       }
+      data.lastActiveDate = data.activeDate;
       return data;
     } catch (e) {
       console.warn('Storage load failed, resetting', e);
@@ -144,6 +447,8 @@ const Storage = (() => {
   function save(data) {
     data.lastVisit = todayKey();
     if (!data.activeDate) data.activeDate = todayKey();
+    data.lastActiveDate = data.activeDate;
+    if (!data.analytics) data.analytics = {};
     localStorage.setItem(KEY, JSON.stringify(data));
     window.dispatchEvent(new CustomEvent('reflectflow:save', { detail: data }));
   }
@@ -250,12 +555,26 @@ const Storage = (() => {
   }
 
   function importJSON(jsonStr) {
-    const parsed = JSON.parse(jsonStr);
-    if (!parsed.habits) throw new Error('Invalid backup file');
-    if (typeof Daily !== 'undefined') Daily.processDayChange(parsed);
-    else parsed.habits.forEach((h) => Streak.recalculate(h));
-    save(parsed);
-    return parsed;
+    try {
+      const parsed = JSON.parse(jsonStr);
+      const safeState = sanitizeImportedState(parsed);
+      if (lastImportReport?.warnings.length) {
+        console.warn('ReflectFlow import repaired unsafe or incomplete data:', lastImportReport);
+      }
+      save(safeState);
+      return safeState;
+    } catch (err) {
+      lastImportReport = {
+        warnings: ['Malformed JSON or unrecoverable import structure.'],
+        error: err
+      };
+      console.warn('ReflectFlow import failed:', err);
+      throw new Error('Import failed. Please choose a valid ReflectFlow JSON backup.');
+    }
+  }
+
+  function getLastImportReport() {
+    return lastImportReport;
   }
 
   function getQuote(index) {
@@ -279,6 +598,11 @@ const Storage = (() => {
     exportDaySheetJSON,
     getJournalForDate,
     importJSON,
+    getLastImportReport,
+    sanitizeString,
+    validateHabit,
+    validateSettings,
+    createDefaultHabit,
     getQuote,
     QUOTES,
     DEFAULT_REMINDERS

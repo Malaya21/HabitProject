@@ -251,33 +251,56 @@ const UI = (() => {
     }
 
     if (!pending.length && !completed.length && !missed.length) {
-      list.innerHTML = '<li class="notif-empty">No habits scheduled today.</li>';
+      const empty = document.createElement('li');
+      empty.className = 'notif-empty';
+      empty.textContent = 'No habits scheduled today.';
+      list.replaceChildren(empty);
       return;
     }
 
-    let html = '';
+    const nodes = [];
+    const addTitle = (text) => {
+      const li = document.createElement('li');
+      li.className = 'notif-section-title';
+      li.textContent = text;
+      nodes.push(li);
+    };
+
     if (pending.length) {
-      html += `<li class="notif-section-title">Pending (${pending.length})</li>`;
+      addTitle(`Pending (${pending.length})`);
       pending.forEach((h) => {
-        html += `<li class="notif-item notif-item--pending">
-          <span>${Habits.escapeHtml(h.title)}</span>
-          <button type="button" class="btn btn--success btn-sm" data-notif-complete="${h.id}">Done</button>
-        </li>`;
+        const li = document.createElement('li');
+        li.className = 'notif-item notif-item--pending';
+        const title = document.createElement('span');
+        title.textContent = h.title;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn--success btn-sm';
+        button.dataset.notifComplete = h.id;
+        button.textContent = 'Done';
+        li.append(title, button);
+        nodes.push(li);
       });
     }
     if (completed.length) {
-      html += `<li class="notif-section-title">Completed (${completed.length})</li>`;
+      addTitle(`Completed (${completed.length})`);
       completed.forEach((h) => {
-        html += `<li class="notif-item notif-item--done">✓ ${Habits.escapeHtml(h.title)}</li>`;
+        const li = document.createElement('li');
+        li.className = 'notif-item notif-item--done';
+        li.textContent = `✓ ${h.title}`;
+        nodes.push(li);
       });
     }
     if (missed.length) {
-      html += `<li class="notif-section-title">Missed (${missed.length})</li>`;
+      addTitle(`Missed (${missed.length})`);
       missed.forEach((h) => {
-        html += `<li class="notif-item notif-item--miss">✗ ${Habits.escapeHtml(h.title)}</li>`;
+        const li = document.createElement('li');
+        li.className = 'notif-item notif-item--miss';
+        li.textContent = `✗ ${h.title}`;
+        nodes.push(li);
       });
     }
-    list.innerHTML = html;
+    list.replaceChildren(...nodes);
   }
 
   function updateNotifBadge(data) {
@@ -314,7 +337,7 @@ const UI = (() => {
     const habitsHtml = data.habits
       .filter((h) => Streak.isScheduledDay(h, d))
       .map((h) => {
-        const status = Streak.getStatus(h, dateKey) || 'pending';
+        const status = Habits.escapeHtml(Streak.getStatus(h, dateKey) || 'pending');
         const note = (h.habitNotes || {})[dateKey] || '—';
         return `<tr>
           <td>${Habits.escapeHtml(h.title)}</td>

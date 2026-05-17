@@ -46,7 +46,7 @@ const App = (() => {
     populateCategoryFilter();
 
     if (!habits.length) {
-      list.innerHTML = '';
+      list.replaceChildren();
       empty.classList.remove('hidden');
     } else {
       empty.classList.add('hidden');
@@ -64,7 +64,7 @@ const App = (() => {
     if (!sel) return;
     const current = sel.value;
     const cats = Habits.getCategories(state);
-    sel.innerHTML = '<option value="all">All Categories</option>' + cats.map((c) => `<option value="${c}">${c}</option>`).join('');
+    sel.replaceChildren(new Option('All Categories', 'all'), ...cats.map((c) => new Option(c, c)));
     if ([...sel.options].some((o) => o.value === current)) sel.value = current;
   }
 
@@ -75,7 +75,7 @@ const App = (() => {
     const list = document.getElementById('notes-list');
     const empty = document.getElementById('notes-empty');
     if (!notes.length) {
-      list.innerHTML = '';
+      list.replaceChildren();
       empty.classList.remove('hidden');
     } else {
       empty.classList.add('hidden');
@@ -375,11 +375,18 @@ const App = (() => {
       reader.onload = () => {
         try {
           state = Storage.importJSON(reader.result);
-          UI.toast('Data imported successfully', 'success');
+          window.App.state = state;
+          const report = Storage.getLastImportReport?.();
+          const repaired = report?.warnings?.length || 0;
+          UI.toast(repaired ? `Data imported with ${repaired} safe repairs` : 'Data imported successfully', 'success');
           initUI();
           render();
         } catch (err) {
-          UI.toast('Invalid JSON file', 'error');
+          console.warn('Import failed. The selected file was not applied.', {
+            error: err,
+            report: Storage.getLastImportReport?.()
+          });
+          UI.toast(err.message || 'Import failed. Invalid JSON file.', 'error');
         }
       };
       reader.readAsText(file);
@@ -389,6 +396,7 @@ const App = (() => {
     document.getElementById('reset-data')?.addEventListener('click', () => {
       if (confirm('Reset ALL data? This cannot be undone.')) {
         state = Storage.reset();
+        window.App.state = state;
         initUI();
         render();
         UI.toast('Fresh start! All progress cleared — begin from today.', 'success');

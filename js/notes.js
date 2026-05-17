@@ -17,7 +17,7 @@ const Notes = (() => {
       id: Storage.uid(),
       date: payload.date,
       mood: payload.mood || 'neutral',
-      content: payload.content,
+      content: Storage.sanitizeString(payload.content, '', 5000),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -30,7 +30,7 @@ const Notes = (() => {
     if (!n) return null;
     n.date = payload.date;
     n.mood = payload.mood;
-    n.content = payload.content;
+    n.content = Storage.sanitizeString(payload.content, '', 5000);
     n.updatedAt = new Date().toISOString();
     return n;
   }
@@ -48,16 +48,18 @@ const Notes = (() => {
   }
 
   function renderCard(note) {
+    const safeId = Habits.escapeAttr(note.id);
+    const mood = Habits.escapeHtml(note.mood);
     return `
-      <article class="note-card glass" data-id="${note.id}">
+      <article class="note-card glass" data-id="${safeId}">
         <header class="note-card__header">
-          <span class="note-mood">${MOOD_EMOJI[note.mood] || '😐'} ${note.mood}</span>
+          <span class="note-mood">${MOOD_EMOJI[note.mood] || '😐'} ${mood}</span>
           <time>${formatDate(note.date)}</time>
         </header>
         <p class="note-content">${Habits.escapeHtml(note.content)}</p>
         <footer class="note-card__footer">
-          <button type="button" class="btn btn--ghost btn-sm" data-action="edit-note" data-id="${note.id}">Edit</button>
-          <button type="button" class="btn btn--ghost btn-sm danger" data-action="delete-note" data-id="${note.id}">Delete</button>
+          <button type="button" class="btn btn--ghost btn-sm" data-action="edit-note" data-id="${safeId}">Edit</button>
+          <button type="button" class="btn btn--ghost btn-sm danger" data-action="delete-note" data-id="${safeId}">Delete</button>
         </footer>
       </article>`;
   }
