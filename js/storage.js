@@ -1,35 +1,6 @@
 /**
  * storage.js — LocalStorage persistence, defaults, import/export
  */
-const Security = (() => {
-  function escapeHTML(value = '') {
-    return String(value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
-  function escapeAttribute(value = '') {
-    return escapeHTML(value).replace(/`/g, '&#96;');
-  }
-
-  function sanitizeClassName(value = 'safe') {
-    return String(value)
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 60) || 'safe';
-  }
-
-  function safeRenderText(el, value = '') {
-    if (el) el.textContent = value ?? '';
-  }
-
-  return { escapeHTML, escapeAttribute, sanitizeClassName, safeRenderText };
-})();
-
 const Storage = (() => {
   const KEY = 'reflectflow_data';
   const VERSION = 1;
@@ -65,21 +36,15 @@ const Storage = (() => {
 
   /** Local calendar date (YYYY-MM-DD) — resets at midnight in your timezone */
   function dateKey(d = new Date()) {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
+    return DateUtils.formatDateKey(d);
   }
 
   function todayKey() {
-    return dateKey(new Date());
+    return DateUtils.todayKey();
   }
 
   function msUntilMidnight() {
-    const now = new Date();
-    const midnight = new Date(now);
-    midnight.setHours(24, 0, 0, 0);
-    return midnight - now;
+    return DateUtils.msUntilMidnight();
   }
 
   function csvCell(value) {
@@ -454,9 +419,7 @@ const Storage = (() => {
   }
 
   function reset() {
-    const fresh = freshStartState();
-    save(fresh);
-    return fresh;
+    return freshStartState();
   }
 
   function getJournalForDate(data, dateKey) {
@@ -561,7 +524,6 @@ const Storage = (() => {
       if (lastImportReport?.warnings.length) {
         console.warn('ReflectFlow import repaired unsafe or incomplete data:', lastImportReport);
       }
-      save(safeState);
       return safeState;
     } catch (err) {
       lastImportReport = {
@@ -575,6 +537,12 @@ const Storage = (() => {
 
   function getLastImportReport() {
     return lastImportReport;
+  }
+
+  function consumeFreshStartToastFlag() {
+    const shouldShow = localStorage.getItem('reflectflow_show_fresh_toast') === '1';
+    if (shouldShow) localStorage.removeItem('reflectflow_show_fresh_toast');
+    return shouldShow;
   }
 
   function getQuote(index) {
@@ -599,6 +567,7 @@ const Storage = (() => {
     getJournalForDate,
     importJSON,
     getLastImportReport,
+    consumeFreshStartToastFlag,
     sanitizeString,
     validateHabit,
     validateSettings,

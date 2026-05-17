@@ -328,11 +328,17 @@ const UI = (() => {
     }
   }
 
+  function safeOpenPrintWindow(html, title = 'ReflectFlow Report') {
+    return BrowserUtils.safeOpenPrintWindow(html, title, {
+      onBlocked: () => toast('Print window was blocked. Please allow popups for this page and try again.', 'warning', 5500),
+      onError: () => toast('Could not prepare the print report. Please try again.', 'error')
+    });
+  }
+
   function printReport(data, dateKey = Storage.todayKey()) {
     const stats = Habits.todayStats(data);
     const d = new Date(dateKey + 'T12:00:00');
     const journal = Storage.getJournalForDate(data, dateKey);
-    const win = window.open('', '_blank');
 
     const habitsHtml = data.habits
       .filter((h) => Streak.isScheduledDay(h, d))
@@ -353,7 +359,7 @@ const UI = (() => {
          <p>${Habits.escapeHtml(journal.content)}</p>`
       : '<p><em>No journal entry for this day.</em></p>';
 
-    win.document.write(`<!DOCTYPE html><html><head><title>ReflectFlow — ${dateKey}</title>
+    const html = `<!DOCTYPE html><html><head><title>ReflectFlow — ${dateKey}</title>
     <style>body{font-family:system-ui;padding:2rem;max-width:800px;margin:0 auto}
     h2{margin-top:1.5rem}table{width:100%;border-collapse:collapse;margin:1rem 0}
     td,th{border:1px solid #ccc;padding:8px;text-align:left}th{background:#f4f4f5}
@@ -367,9 +373,9 @@ const UI = (() => {
     <tbody>${habitsHtml || '<tr><td colspan="4">No habits scheduled</td></tr>'}</tbody></table>
     <h2>Journal</h2>
     <div class="journal">${journalHtml}</div>
-    </body></html>`);
-    win.document.close();
-    win.print();
+    </body></html>`;
+
+    return safeOpenPrintWindow(html, `ReflectFlow ${dateKey}`);
   }
 
   return {
@@ -390,6 +396,7 @@ const UI = (() => {
     showLoader,
     showOnboarding,
     navigate,
+    safeOpenPrintWindow,
     printReport,
     closeNotifPanel,
     toggleNotifPanel,

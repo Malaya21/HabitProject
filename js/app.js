@@ -7,7 +7,7 @@ const App = (() => {
   let resizeTimer = null;
 
   function persist() {
-    Storage.save(state);
+    AppState.commit();
     render();
   }
 
@@ -346,36 +346,31 @@ const App = (() => {
 
     document.getElementById('export-today-csv')?.addEventListener('click', () => {
       const day = Storage.todayKey();
-      downloadFile(`reflectflow-${day}.csv`, Storage.exportDaySheetCSV(state, day), 'text/csv');
-      UI.toast(`Today's sheet downloaded (${day})`, 'success');
+      safeDownloadFile(`reflectflow-${day}.csv`, Storage.exportDaySheetCSV(state, day), 'text/csv');
     });
 
     document.getElementById('export-today-json')?.addEventListener('click', () => {
       const day = Storage.todayKey();
-      downloadFile(`reflectflow-${day}.json`, Storage.exportDaySheetJSON(state, day), 'application/json');
-      UI.toast(`Today's sheet downloaded (${day})`, 'success');
+      safeDownloadFile(`reflectflow-${day}.json`, Storage.exportDaySheetJSON(state, day), 'application/json');
     });
 
     document.getElementById('export-json')?.addEventListener('click', () => {
-      downloadFile('reflectflow-backup.json', Storage.exportJSON(state), 'application/json');
-      UI.toast('JSON exported', 'success');
+      safeDownloadFile('reflectflow-backup.json', Storage.exportJSON(state), 'application/json');
     });
 
     document.getElementById('export-csv')?.addEventListener('click', () => {
-      downloadFile('reflectflow-data.csv', Storage.exportCSV(state), 'text/csv');
-      UI.toast('CSV exported', 'success');
+      safeDownloadFile('reflectflow-data.csv', Storage.exportCSV(state), 'text/csv');
     });
 
     document.getElementById('export-print')?.addEventListener('click', () => UI.printReport(state, Storage.todayKey()));
 
     document.getElementById('import-json')?.addEventListener('change', (e) => {
-      const file = e.target.files[0];
+          const file = e.target.files[0];
       if (!file) return;
       const reader = new FileReader();
       reader.onload = () => {
         try {
-          state = Storage.importJSON(reader.result);
-          window.App.state = state;
+          state = AppState.replace(Storage.importJSON(reader.result));
           const report = Storage.getLastImportReport?.();
           const repaired = report?.warnings?.length || 0;
           UI.toast(repaired ? `Data imported with ${repaired} safe repairs` : 'Data imported successfully', 'success');
@@ -395,8 +390,7 @@ const App = (() => {
 
     document.getElementById('reset-data')?.addEventListener('click', () => {
       if (confirm('Reset ALL data? This cannot be undone.')) {
-        state = Storage.reset();
-        window.App.state = state;
+        state = AppState.reset();
         initUI();
         render();
         UI.toast('Fresh start! All progress cleared — begin from today.', 'success');
@@ -460,17 +454,16 @@ const App = (() => {
   function startDayWatch() {
     Daily.startWatch((atMidnight) => {
       const result = Daily.checkAndApply(state, atMidnight);
+      if (result.changed) AppState.commit();
       onDayChanged(state, result);
     });
   }
 
-  function downloadFile(name, content, type) {
-    const blob = new Blob([content], { type });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = name;
-    a.click();
-    URL.revokeObjectURL(a.href);
+  function safeDownloadFile(name, content, type) {
+    return BrowserUtils.safeDownloadFile(name, content, type, {
+      onSuccess: (fileName) => UI.toast(`${fileName} downloaded`, 'success'),
+      onError: () => UI.toast('Export failed. Please try again.', 'error')
+    });
   }
 
   function initUI() {
@@ -494,8 +487,12 @@ const App = (() => {
 
   function init() {
     UI.showLoader(true);
-    state = Storage.load();
-    window.App = { state, persist, render };
+    state = AppState.init(Storage.load());
+    AppState.subscribe((nextState) => {
+      state = nextState;
+      if (window.App) window.App.state = nextState;
+    });
+    window.App = { state, persist, render, getState: AppState.get, updateState: AppState.commit };
     bindEvents();
     initUI();
     render();
@@ -506,8 +503,7 @@ const App = (() => {
     UI.showLoader(false);
     registerSW();
     startDayWatch();
-    if (localStorage.getItem('reflectflow_show_fresh_toast')) {
-      localStorage.removeItem('reflectflow_show_fresh_toast');
+    if (Storage.consumeFreshStartToastFlag()) {
       setTimeout(() => UI.toast('Fresh start! All stats are zero — begin tracking from today.', 'success', 5000), 400);
     } else {
       setTimeout(() => UI.toast('Welcome to ReflectFlow ✦', 'info'), 600);
@@ -515,5 +511,5 @@ const App = (() => {
   }
 
   document.addEventListener('DOMContentLoaded', init);
-  return { get state() { return state; } };
+  return { get state() { return state; }, safeDownloadFile };
 })();
